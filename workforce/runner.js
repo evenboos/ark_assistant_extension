@@ -30,8 +30,16 @@ function startWorkforce(options = {}) {
       task.beforeLongTermRates = initialModel.longTermNet();
       task.beforeHappiness = initialModel.happiness();
       task.doorGuardRequired = workforceDoorGuardRequired(view);
+      const progressLabels = { prepare: '正在读取岗位容量…', score: '正在估算每个岗位的实际产出…',
+        match: '正在按产出匹配岗位…', improve: '正在修补资源缺口…', long: '正在优化心情与长期产出…' };
+      function reportPlanProgress(progress) {
+        const percent = Math.max(0, Math.min(99, Math.round(progress.done / progress.total * 100)));
+        task.message = `${progressLabels[progress.phase] ?? '正在计算安排…'}（${percent}%）`;
+      }
       task.message = task.options.strategy === 'production' ? '正在按实际产出匹配岗位，并计入电台心情增益与资源收支…' : '正在按最高基础属性安排生产岗位与训练室…';
-      const plan = planWorkforce(view, task.options);
+      // 分片计算：人数很多时一次性算完会长时间卡住游戏页面，这里按时间片推进并回报进度。
+      const plan = await planWorkforceChunked(view, task.options,
+        { onProgress: reportPlanProgress, stopped: () => task.stopRequested });
       task.excluded = plan.excluded;
       task.expectedRates = plan.expected;
       task.rates = plan.expected;
@@ -108,14 +116,22 @@ function startWorkforce(options = {}) {
         task.message = `已停止居民安排，已确认调动 ${task.moved} 人次，已完成的调动保留。`;
       } else {
         for (const [id, roomId] of destinations) if (expected.get(id) !== roomId) throw new Error('最终居民位置与安排方案不一致');
-        const deficits = [['power', '电力'], ['food', '食物'], ['water', '净水'], ['scrap', '废料']]
+        // 废料长期溢出，只有零件工坊会消耗它；安排不再为废料收支留空岗位，这里只作为读数提示。
+        const deficits = [['power', '电力'], ['food', '食物'], ['water', '净水']]
           .filter(([key]) => task.rates[key] < -1e-7).map(([, label]) => label);
-        const longDeficits = [['power', '电力'], ['food', '食物'], ['water', '净水'], ['scrap', '废料']]
+        const longDeficits = [['power', '电力'], ['food', '食物'], ['water', '净水']]
           .filter(([key]) => task.longTermRates[key] < -1e-7).map(([, label]) => label);
+        const scraps = [['scrap_now', task.rates.scrap], ['scrap_long', task.longTermRates.scrap]]
+          .filter(([, value]) => value < -1e-7).map(([key]) => key === 'scrap_now' ? '当前心情' : '长期目标');
         const mood = task.happiness;
-        task.message = `已安排生产 ${plan.production} 人、训练 ${plan.training} 人，实际调动 ${task.moved} 人次。${plan.resting ? `\n暂无合适岗位，${plan.resting} 人门外待命。` : ''}\n` +
-          (deficits.length ? `当前心情的即时资源亏损：${deficits.join('、')}，现有可调人手和房间可能不足，请检查。` : '当前心情下，电力、食物、净水及废料即时收支无亏损。') + '\n' +
-          (longDeficits.length ? `心情稳定后的长期估算仍亏损：${longDeficits.join('、')}。` : '按心情长期目标估算，电力、食物、净水及废料收支无亏损。') + '\n' +
+        // 门外待命不是被跳过调人：在家的可调成人全都参与匹配，只是可用岗位不够。
+        const capacityNote = plan.capacity && plan.resting > 0 ?
+          `\n门外待命 ${plan.resting} 人（可调成人 ${plan.available} 人；可用生产位置 ${plan.capacity.production} 个已满，` +
+          `训练位置 ${plan.capacity.training} 个仅限可训练的人）。留下的是产出最低的，扩建或升级房间后会自动补上。` : '';
+        task.message = `已安排生产 ${plan.production} 人、训练 ${plan.training} 人，实际调动 ${task.moved} 人次。${capacityNote}\n` +
+          (deficits.length ? `电力、食物、净水的即时收支仍为负：${deficits.join('、')}，现有可调人手和房间可能不足，请检查。` : '当前心情下，电力、食物、净水即时收支无亏损。') + '\n' +
+          (longDeficits.length ? `心情稳定后的长期估算仍为负：${longDeficits.join('、')}。` : '按心情长期目标估算，电力、食物、净水收支无亏损。') + '\n' +
+          (scraps.length ? `废料按当前配置估算为净消耗（${scraps.join('、')}），若废料库存充足可忽略。` : '') +
           `心情预估：当前平均 ${mood.averageCurrent.toFixed(1)} → 一小时后 ${mood.averageOneHour.toFixed(1)} → 长期目标 ${mood.averageTarget.toFixed(1)}；` +
           `${mood.radioActive ? '电台全体心情加成已计入' : '电台未提供全体心情加成'}。`;
       }

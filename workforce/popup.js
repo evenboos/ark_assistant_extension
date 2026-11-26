@@ -70,7 +70,7 @@ function applyOptions(value) {
 }
 function describeStrategy() {
   document.querySelector('#strategy-note').textContent = strategy.value === 'production' ?
-    '综合服装、等级、心情和房间等级匹配生产岗位，并尝试减少电、粮、水及废料亏损；相同收益优先留在原岗。人手或房间不足时仍可能亏损。' :
+    '先把所有生产岗位填满，再按服装、等级和心情算出的有效属性把高属性居民换到对口岗位，让总产出最大。电、粮、水的消耗只由已建房间和人口决定，废料长期溢出，所以不会为了收支把岗位空着；相同收益优先留在原岗。人手或房间不足时仍可能亏损。' :
     '按力、感、耐、魅、智、敏六项最高基础属性安排，智力优先零件工坊，再安排医务室；剩余居民优先训练，训练无位再补生产空位。此策略不保障资源收支。';
 }
 try { applyOptions(JSON.parse(localStorage.getItem('fengbao-workforce-options') || 'null')); } catch { /* 设置不可读时使用默认值。 */ }

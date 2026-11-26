@@ -136,15 +136,81 @@ test('跨岗位匹配让通才和专才各用所长', () => {
   valid(state, result);
 });
 
-test('先减少粮食缺口，避免最高智力者全部挤进工坊', () => {
+test('先填满生产岗位，再按属性高低安排，不为废料收支把工坊留空', () => {
   const state = view(Array.from({ length: 4 }, (_, index) => person(index + 1, { stats: stats({ int: 10, agi: 8, end: 8 }) })),
     [room(1, 'workshop'), room(2, 'diner'), room(3, 'scrap')]);
   const highest = plan(state, { strategy: 'highest' });
   const optimized = plan(state);
+  // 三间房共 6 个位置、4 名居民：全部上岗，不会为了保住废料收支把工坊空着。
+  assert.equal(optimized.production, 4);
+  assert.equal(optimized.training, 0);
+  assert.equal(optimized.resting, 0);
+  assert.equal(optimized.assignments.filter(item => item.roomId === 1).length, 2);
   assert.ok(highest.expected.scrap < 0);
-  assert.ok(optimized.expected.food >= 0);
-  assert.ok(optimized.expected.scrap >= -1e-7);
   valid(state, optimized);
+});
+
+test('废料溢出的前提下不看废料收支，电力、食物、净水需求只由房间与人口决定', () => {
+  // 工坊吃废料但产出零件：废料收支为负也照样填满，产出总量优先。
+  const state = view([person(1, { stats: stats({ int: 10 }) }), person(2, { stats: stats({ end: 10 }) })],
+    [room(1, 'workshop'), room(2, 'scrap')]);
+  const result = plan(state);
+  assert.equal(result.production, 2);
+  assert.equal(result.assignments.find(item => item.residentId === 1).roomId, 1);
+  assert.ok(result.expected.parts > 0);
+  // 需求侧（电、粮、水）与是否安排无关：换一份安排不会改变需求口径。
+  const model = projectedNets(state, result.assignments);
+  assert.equal(typeof model.net.food, 'number');
+  valid(state, result);
+
+  // 高等级房间优先装高属性的人：同一资源、不同等级时，属性更高的去高等级房。
+  const graded = view([person(1, { stats: stats({ str: 10 }) }), person(2, { stats: stats({ str: 4 }) })],
+    [room(1, 'power', { level: 3 }), room(2, 'power')]);
+  const gradedResult = plan(graded);
+  assert.equal(gradedResult.assignments.find(item => item.residentId === 1).roomId, 1);
+  valid(graded, gradedResult);
+});
+
+test('门外待命的人同样参与匹配，只有岗位不够时才留在门外', () => {
+  // 全员当前都在门外，仍然会被安排进空岗位；门外不是“被跳过”。
+  const outside = view([person(1, { roomId: null }), person(2, { roomId: null })], [room(1, 'power'), room(2, 'diner')]);
+  const filled = plan(outside);
+  assert.equal(filled.resting, 0);
+  assert.equal(filled.production, 2);
+  assert.deepEqual(filled.assignments.map(item => item.roomId).sort(), [1, 2]);
+  valid(outside, filled);
+
+  // 人比位置多：位置全满，留在门外的是产出最低（属性最低）的人。
+  const crowded = view([
+    person(1, { stats: stats({ str: 10 }) }), person(2, { stats: stats({ str: 1 }) }),
+    person(3, { stats: stats({ str: 2 }) }), person(4, { stats: stats({ str: 3 }) })
+  ], [room(1, 'power')]);
+  const packed = plan(crowded);
+  assert.equal(packed.available, 4);
+  assert.equal(packed.production, 2);
+  assert.equal(packed.resting, 2);
+  assert.deepEqual(packed.capacity, { production: 2, training: 0 }, '容量应如实反映可用岗位');
+  assert.deepEqual([...new Set(packed.assignments.filter(item => item.roomId === 1).map(item => item.residentId))].sort((a, b) => a - b), [1, 4]);
+  valid(crowded, packed);
+});
+
+test('岗位填满后按对口属性高低分配，不对口的高属性居民也先上岗', () => {
+  const split = view([person(1, { stats: stats({ str: 10 }) }), person(2, { stats: stats({ agi: 10 }) })],
+    [room(1, 'power'), room(2, 'diner')]);
+  const result = plan(split);
+  assert.equal(result.production, 2);
+  assert.equal(result.assignments.find(item => item.residentId === 1).roomId, 1);
+  assert.equal(result.assignments.find(item => item.residentId === 2).roomId, 2);
+  valid(split, result);
+
+  // 生产位置比人多时，超出训练允许范围的人也先去空岗，而不是在门外待命。
+  const spare = view(Array.from({ length: 3 }, (_, index) => person(index + 1, { stats: stats({ str: 10 - index }) })),
+    [room(1, 'power'), room(2, 'scrap')]);
+  const filled = plan(spare);
+  assert.equal(filled.resting, 0);
+  assert.equal(filled.production, 3);
+  assert.equal(filled.assignments.filter(item => item.roomId === 1).length, 2);
+  valid(spare, filled);
 });
 
 test('外出成人保留岗位名额，儿童和倒下不占成人名额', () => {
@@ -498,4 +564,68 @@ test('其他避难所任务阻止居民安排发请求', async () => {
     assert.equal(result.actions.length, 0);
     assert.match(result.task.message, /其他避难所任务/);
   }
+});
+
+// 人口较多的避难所：优化前同规模需要 10 秒以上并卡住游戏页面，这里留足余量只拦截明显退化。
+function crowdedShelter(residents) {
+  const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'];
+  let seed = 20261126;
+  const next = () => (seed = (1664525 * seed + 1013904223) >>> 0);
+  const rooms = [room(1, 'power', { width: 3, level: 3 }), room(2, 'power', { width: 3, level: 3 }),
+    room(3, 'diner', { width: 3, level: 2 }), room(4, 'diner', { width: 3, level: 2 }),
+    room(5, 'water', { width: 3, level: 2 }), room(6, 'water', { width: 3, level: 2 }),
+    room(7, 'scrap', { width: 2, level: 2 }), room(8, 'scrap', { width: 2, level: 2 }),
+    room(9, 'workshop', { width: 2, level: 2 }), room(10, 'medbay', { width: 2, level: 2 }), room(11, 'radio', { width: 2 }),
+    room(12, 'training', { trainStat: 'str' }), room(13, 'training', { trainStat: 'per' }),
+    room(14, 'training', { trainStat: 'end' }), room(15, 'training', { trainStat: 'int' }),
+    room(16, 'quarters', { width: 3 })];
+  return view(Array.from({ length: residents }, (_, index) => person(index + 1, {
+    stats: Object.fromEntries(keys.map(key => [key, next() % 10 + 1])),
+    happiness: next() % 101, xp: next() % 1000
+  })), rooms);
+}
+
+test('人数较多时一键安排线性增长，不会长时间卡住页面', () => {
+  const state = crowdedShelter(64);
+  const started = Date.now();
+  const result = plan(state);
+  const elapsed = Date.now() - started;
+  assert.equal(result.available, 64);
+  valid(state, result);
+  assert.ok(elapsed < 3000, `64 人一键安排耗时 ${elapsed} ms`);
+});
+
+test('分片计算与一次算完结果一致，并按时间片让出主线程', async () => {
+  const state = crowdedShelter(24);
+  const context = load();
+  vm.runInContext(planner, context);
+  const sync = plain(context.planWorkforce(state, {}));
+  const slices = [];
+  const phases = new Set();
+  const chunked = plain(await context.planWorkforceChunked(state, {}, {
+    budget: 0, defer: () => { slices.push(Date.now()); return Promise.resolve(); },
+    onProgress: progress => phases.add(progress.phase)
+  }));
+  assert.deepEqual(chunked.assignments, sync.assignments);
+  assert.deepEqual(chunked.expected, sync.expected);
+  assert.ok(slices.length > 0, '应当把计算切成多段');
+  assert.ok(phases.has('improve') && phases.has('long'), `进度阶段：${[...phases]}`);
+  assert.ok([...phases].every(phase => typeof phase === 'string'));
+  // “最高基础属性优先”只做一次线性分配，不需要分片。
+  const highestSlices = [];
+  const highest = plain(await context.planWorkforceChunked(state, { strategy: 'highest' }, {
+    budget: 0, defer: () => { highestSlices.push(Date.now()); return Promise.resolve(); }
+  }));
+  assert.deepEqual(highest.assignments, plain(context.planWorkforce(state, { strategy: 'highest' })).assignments);
+  assert.equal(highestSlices.length, 0);
+});
+
+test('计算过程中按下停止会放弃方案，不提交任何调动', async () => {
+  const state = crowdedShelter(24);
+  const context = load();
+  vm.runInContext(planner, context);
+  let stopped = false;
+  await assert.rejects(() => context.planWorkforceChunked(state, {}, {
+    budget: 0, defer: () => { stopped = true; return Promise.resolve(); }, stopped: () => stopped
+  }), /已按下停止/);
 });
