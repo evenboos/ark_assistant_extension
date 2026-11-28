@@ -100,6 +100,12 @@ test('MutationObserver 每次新增都去重，并且自身删除不会形成循
   guard.stop();
 });
 
+test('新版不再自动注入旧推荐调入去重守卫', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+  assert.ok(!manifest.content_scripts.flatMap(item => item.js).includes('shelter/native-room-guard.js'));
+});
+
 test('不同弹窗各自保留一个，普通下拉不受影响', () => {
   const page = root();
   const dialogA = {};

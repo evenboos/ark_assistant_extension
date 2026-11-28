@@ -25,7 +25,7 @@ function runShelterIncidents(options = {}) {
       // 完整接口包含大门及所有楼层，不依赖页面当前可见的房间。
       // 00:00–07:59 的大门掠夺者进度冻结，留给托管在 08:00 由原救援者处理。
       const incidents = view.state.rooms.filter(room => room.incident && Object.hasOwn(labels, room.incident.kind) &&
-        !(room.type === 'door' && room.incident.kind === 'raiders' && new Date(view.serverTime).getHours() < 8))
+        !(room.type === 'door' && room.incident.kind === 'raiders' && new Date(view.serverTime + 8 * 3600000).getUTCHours() < 8))
         .sort((left, right) => left.floor - right.floor || left.col - right.col || left.id - right.id);
       if (!incidents.length) {
         task.message = '已检查全部房间（含大门），没有需要立即处理的着火、变异鼠、漏水或掠夺者事件；夜间大门掠夺者会留到 08:00。';
@@ -52,15 +52,19 @@ function runShelterIncidents(options = {}) {
       const kind = target.incident.kind;
       const destination = `${target.floor} 层${target.type === 'door' ? '大门' : `房间 ${target.id}`}（${labels[kind]}）`;
       task.rooms = incidents.map(room => `${room.floor} 层${room.type === 'door' ? '大门' : `房间 ${room.id}`}：${labels[room.incident.kind]}`);
-      task.excluded = view.state.residents.filter(resident => resident.adultAt > view.serverTime || resident.away !== null || resident.deadAt !== null)
-        .map(resident => ({ id: resident.id, name: resident.name, reason: resident.adultAt > view.serverTime ? '儿童' : resident.deadAt !== null ? '已倒下（游戏不允许调动）' : '外出中（游戏不允许调动）' }));
+      task.excluded = view.state.residents.filter(resident => resident.locked || resident.giftOffer || resident.adultAt > view.serverTime || resident.away !== null || resident.deadAt !== null)
+        .map(resident => ({ id: resident.id, name: resident.name, reason: resident.locked ? '居民已锁定' : resident.giftOffer ? '居民正在赠送' : resident.adultAt > view.serverTime ? '儿童' : resident.deadAt !== null ? '已倒下（游戏不允许调动）' : '外出中（游戏不允许调动）' }));
 
       while (true) {
         if (options.shouldStop?.()) { task.cancelled = true; return task; }
+        const latest = await fetch('/api/shelter', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (!latest.ok || latest.redirected) throw new Error('读取失败或登录状态已失效');
+        updateView(await latest.json());
+        if (view.switches?.frozen) throw new Error('避难所正在维护');
         const room = view.state.rooms.find(item => item.id === target.id);
         if (room?.incident?.kind !== kind) break;
         // 救援不保留宿舍、训练室或感情关系，也不检查房间定员。
-        const resident = view.state.residents.find(item => item.adultAt <= view.serverTime && item.away === null && item.deadAt === null && item.roomId !== target.id);
+        const resident = view.state.residents.find(item => !item.locked && !item.giftOffer && item.adultAt <= view.serverTime && item.away === null && item.deadAt === null && item.roomId !== target.id);
         if (!resident) break;
         task.message = `正在将「${resident.name}」调往 ${destination}…\n已确认调动 ${task.moved} 人。`;
         const moveResponse = await fetch('/api/shelter/action', {

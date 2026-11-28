@@ -24,6 +24,60 @@ function plan(state, options) {
   return plain(context.planWorkforce(state, options));
 }
 const at = (hour, minute = 0) => new Date(2026, 10, 24, hour, minute, 0, 0).getTime();
+
+test('新版六格合并房可安排十二人，锁定和预约赠送居民保留原岗占位', () => {
+  const residents = Array.from({ length: 13 }, (_, index) => person(index + 1));
+  Object.assign(residents[0], { locked: true, roomId: 1 });
+  Object.assign(residents[1], { giftOffer: { to: 'friend' }, roomId: 1 });
+  const state = view(residents, [room(1, 'power', { width: 6 })]);
+  const result = plan(state);
+  valid(state, result);
+  assert.equal(result.excluded.length, 2);
+  assert.equal(result.assignments.filter(item => item.roomId === 1).length, 10);
+});
+
+test('新版分拣站按幸运安排并计生产耗电，随机物资不计确定资源收入', () => {
+  const state = view([person(1, { stats: stats({ lck: 10 }) })], [room(1, 'sorter', { width: 6 })]);
+  const result = plan(state);
+  assert.equal(result.assignments[0].roomId, 1);
+  assert.equal(result.expected.power, -6);
+  assert.equal(result.expected.scrap, 0);
+});
+
+test('分拣站与普通生产争用人手时保留增量产出优化，重复安排稳定', () => {
+  const state = view([person(1, { stats: stats({ lck: 10, str: 1 }) }), person(2, { stats: stats({ lck: 10, str: 1 }) }),
+    person(3, { stats: stats({ str: 10, lck: 1 }) }), person(4, { stats: stats({ str: 10, lck: 1 }) })],
+    [room(1, 'sorter'), room(2, 'power')]);
+  for (const strategy of ['production', 'highest']) {
+    const result = plan(state, { strategy });
+    assert.deepEqual(result.assignments.filter(item => item.roomId === 1).map(item => item.residentId).sort(), [1, 2]);
+    assert.equal(plan(applied(state, result), { strategy }).changed, 0);
+    assert.deepEqual(Object.keys(result.expected).sort(), ['food', 'parts', 'power', 'scrap', 'stimpak', 'water']);
+  }
+});
+
+test('提交前居民被锁定时取消一键安排', async () => {
+  const result = await run(view([person(1)], [room(1, 'power')]), {}, {
+    before({ server, gets, action }) { if (!action && gets === 2) server.state.residents[0].locked = true; }
+  });
+  assert.equal(result.actions.length, 0);
+});
+
+test('暂停电台招募仍加心情，第一间空电台不遮蔽其他值班电台', () => {
+  const state = view([person(1, { roomId: 2 })], [room(1, 'radio'), room(2, 'radio')]);
+  state.state.radioRecruitmentPaused = true;
+  const mood = projectedHappiness(state);
+  assert.equal(mood.radioActive, true);
+  assert.equal(mood.residents[0].target, 95);
+});
+
+test('夜间冻结按北京时间判断，不取电脑本地时区', () => {
+  const context = load(); vm.runInContext(planner, context);
+  for (const [iso, required] of [['2026-11-27T15:59:00Z', true], ['2026-11-27T16:00:00Z', false],
+    ['2026-11-27T23:59:00Z', false], ['2026-11-28T00:00:00Z', true]]) {
+    assert.equal(context.workforceDoorGuardRequired({ serverTime: Date.parse(iso) }), required, iso);
+  }
+});
 function projectedHappiness(state, assignments = []) {
   const context = load();
   vm.runInContext(planner, context);

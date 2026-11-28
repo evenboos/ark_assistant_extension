@@ -17,13 +17,20 @@ function restoreShelterPositions(options = {}) {
       const pending = snapshot.residents.filter(saved => {
         const resident = view.state.residents.find(item => item.id === saved.id);
         if (resident?.roomId === saved.roomId) return false;
-        const reason = !resident ? '居民已不在名单中' : resident.adultAt > view.serverTime ? '儿童无法调动' :
+        const reason = !resident ? '居民已不在名单中' : resident.locked ? '居民已锁定' : resident.giftOffer ? '居民正在赠送' : resident.adultAt > view.serverTime ? '儿童无法调动' :
           resident.away !== null ? '居民外出中' : resident.deadAt !== null ? '居民已倒下' :
           saved.roomId !== null && !view.state.rooms.some(room => room.id === saved.roomId) ? '原房间已不存在' : '';
         if (reason) task.excluded.push({ id: saved.id, name: saved.name, reason });
         return !reason;
       });
       async function move(saved, roomId) {
+        const latest = await fetch('/api/shelter', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (!latest.ok || latest.redirected) throw new Error('读取失败或登录状态已失效');
+        view = await latest.json();
+        const current = view.state.residents.find(item => item.id === saved.id);
+        if (!current || current.locked || current.giftOffer || current.away !== null || current.deadAt !== null ||
+            view.switches?.frozen) throw new Error('居民状态已变化，停止恢复');
+        if (current.roomId === roomId) return;
         task.message = `正在恢复「${saved.name}」…已确认调动 ${task.moved} 人次。`;
         const response = await fetch('/api/shelter/action', {
           method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(15000), headers: { 'content-type': 'application/json' },

@@ -59,6 +59,7 @@ function shelterTargetNextBuild(view, options = {}) {
   const roomType = options.room;
   const count = Math.max(0, Math.floor(Number(options.count) || 0));
   if (!roomType || count < 1 || !shelterTargetBuildable.includes(roomType)) return null;
+  if (roomType === 'sorter' && view.switches?.sorterBuild === false) return null;
   const trainStat = roomType === 'training' ? shelterTargetNormalizeTrainStat(options.trainStat) : null;
   const depth = Math.max(0, Math.floor(Number(view?.state?.depth) || 0));
   let startFloor = Math.floor(Number(options.startFloor));

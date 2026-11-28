@@ -14,7 +14,7 @@ function planOutfits(view) {
   // 宿舍、门外和仓库也不产生属性收益。大门按耐力。
   const statByRoom = {
     door: 'end', power: 'str', diner: 'agi', water: 'per', scrap: 'end',
-    medbay: 'int', workshop: 'int', armory: 'str', tailor: 'cha'
+    medbay: 'int', workshop: 'int', armory: 'str', tailor: 'cha', sorter: 'lck'
   };
   const rooms = new Map(state.rooms.map(room => [room.id, room]));
   const items = state.items.filter(item => item?.slot === 'outfit' && item.bonus && typeof item.bonus === 'object' &&
@@ -44,7 +44,7 @@ function planOutfits(view) {
     return level * 100 + width;
   }
   // 外出或倒下居民身上的服装无法转交；其余服装都可以参与全局分配。
-  const lockedItems = new Set();
+  const lockedItems = shelterReservedEquipment(view);
   for (const [itemId, owner] of wornBy) {
     const room = rooms.get(owner.roomId);
     if (protectedIds.has(owner.id) || owner.adultAt > now || owner.away !== null || owner.deadAt !== null ||

@@ -53,6 +53,17 @@ async function run(state = basic(), options = {}, hooks = {}, selected = pairs([
   return { server, actions, timers, context, task: context.__fengbaoDormAssignment, gets: () => gets };
 }
 
+test('六格宿舍可配对，锁定赠送和等待首次安排者不调入', async () => {
+  const state = basic(); state.state.rooms[2].width = 6;
+  const result = await run(state);
+  assert.deepEqual(result.server.state.residents.map(item => item.roomId), [3, 3]);
+  for (const flags of [{ locked: true }, { giftOffer: {} }, { awaitingAssignment: true }]) {
+    const blocked = structuredClone(state); Object.assign(blocked.state.residents[0], flags);
+    const skipped = await run(blocked);
+    assert.equal(skipped.actions.length, 0);
+  }
+});
+
 test('默认临时配对记录原生产和训练岗位，服务端组建家庭后各自归岗', async () => {
   const result = await run();
   assert.equal(result.task.monitoring, true);

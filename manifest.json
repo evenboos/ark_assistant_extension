@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "风堇Ark自动助手",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "主站修仙：奇遇循环、远征循环、速刷迷雾、速刷关卡；避难所：居民配对、居民信息、一键安排、分配装备与一键托管。",
   "permissions": [
     "activeTab",
@@ -42,7 +42,6 @@
         "https://game.arkengine.me/shelter*"
       ],
       "js": [
-        "shelter/native-room-guard.js",
         "stewardship/log-bridge.js"
       ],
       "run_at": "document_idle"

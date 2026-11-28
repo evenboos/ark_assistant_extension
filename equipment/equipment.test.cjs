@@ -27,6 +27,35 @@ function equip(state, residentId, slot, itemId) {
   if (itemId !== null) for (const resident of state.state.residents) if (resident[field] === itemId) resident[field] = null;
   state.state.residents.find(resident => resident.id === residentId)[field] = itemId;
 }
+
+test('新版锁定、赠送及外出预约装备不参与一键装备分配', () => {
+  const state = view([
+    person(1, { locked: true, outfitId: 10 }),
+    person(2, { giftOffer: { to: 'friend' }, weaponId: 20 }),
+    person(3, { away: { reservedEquipment: { outfit: 11, weapon: 21 } } }),
+    person(4, { roomId: 1 })
+  ], [outfit(10, { lck: 7 }), outfit(11, { lck: 6 }), outfit(12, { lck: 5 }),
+    weapon(20, [30, 30]), weapon(21, [20, 20]), weapon(22, [10, 10])], [room(1, 'sorter')]);
+  const result = plan(state);
+  assert.deepEqual(result.targets, [{ residentId: 4, weaponId: 22, outfitId: 12 }]);
+});
+
+test('提交前新增的外出预约装备不得被抢走', async () => {
+  const state = view([person(1), person(2, { away: { kind: 'explore' } })], [weapon(20, [20, 20])]);
+  assert.equal((await run(state, { weapons: true, outfits: false })).actions.length, 1);
+  const result = await run(state, { weapons: true, outfits: false }, {
+    before({ server, gets, action }) {
+      if (!action && gets === 2) server.state.residents[1].away.reservedEquipment = { weapon: 20 };
+    }
+  });
+  assert.equal(result.actions.length, 0);
+});
+
+test('只有幸运属性收益的分拣站优先获得幸运服装', () => {
+  const state = view([person(1, { roomId: 1 }), person(2, { roomId: 2 })],
+    [outfit(10, { lck: 7 }), outfit(11, { str: 6 })], [room(1, 'sorter'), room(2, 'power')]);
+  assert.deepEqual(plan(state).targets.map(item => item.outfitId), [10, 11]);
+});
 function applyPlan(state, result) {
   const updated = structuredClone(state);
   for (const target of result.targets) Object.assign(updated.state.residents.find(resident => resident.id === target.residentId), {

@@ -2,7 +2,7 @@
 function shelterEquipmentIncidentBlocks(room, serverTime) {
   if (!room?.incident) return false;
   const date = new Date(serverTime);
-  const doorGuardRequired = !Number.isFinite(date.getTime()) || date.getHours() >= 8;
+  const doorGuardRequired = !Number.isFinite(date.getTime()) || new Date(date.getTime() + 8 * 3600000).getUTCHours() >= 8;
   return !(room.type === 'door' && room.incident.kind === 'raiders' && !doorGuardRequired);
 }
 
@@ -11,7 +11,7 @@ function shelterEquipmentModel(view) {
   const now = view?.serverTime;
   const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'];
   const fields = { weapon: 'weaponId', outfit: 'outfitId' };
-  const production = { power: 'str', diner: 'agi', water: 'per', scrap: 'end', medbay: 'int', workshop: 'int' };
+  const production = { power: 'str', diner: 'agi', water: 'per', scrap: 'end', medbay: 'int', workshop: 'int', sorter: 'lck' };
   if (!Number.isFinite(now) || !Array.isArray(state?.residents) || !Array.isArray(state.rooms) || !Array.isArray(state.items)) {
     throw new Error('装备或居民数据不完整，无法分配');
   }
@@ -46,14 +46,15 @@ function shelterEquipmentModel(view) {
       owners.set(id, resident.id);
     }
     const room = rooms.get(resident.roomId);
-    const reason = questIds.has(resident.id) ? '本周任务小队' : resident.adultAt > now ? '儿童' : resident.away !== null ? '外出中' :
+    const reason = resident.locked ? '居民已锁定' : resident.giftOffer ? '居民正在赠送' : questIds.has(resident.id) ? '本周任务小队' : resident.adultAt > now ? '儿童' : resident.away !== null ? '外出中' :
       resident.deadAt !== null ? '已倒下' : shelterEquipmentIncidentBlocks(room, now) ? '所在房间正在处理事件' : '';
     if (reason) excluded.push({ id: resident.id, name: resident.name, reason });
     else candidates.push(resident);
   }
   candidates.sort((left, right) => left.id - right.id);
   const protectedIds = new Set(excluded.map(resident => resident.id));
-  const available = state.items.filter(item => !protectedIds.has(owners.get(item.id))).sort((left, right) => left.id - right.id);
+  const reserved = new Set(state.residents.flatMap(resident => Object.values(resident.away?.reservedEquipment ?? {})));
+  const available = state.items.filter(item => !reserved.has(item.id) && !protectedIds.has(owners.get(item.id))).sort((left, right) => left.id - right.id);
   const gain = (resident, item, key) => Math.min(17, resident.stats[key] + (item?.bonus?.[key] ?? 0)) - resident.stats[key];
   const combat = (resident, outfit) => 2 * Math.min(50, 1 + Math.floor(Math.sqrt(resident.xp / 3))) +
     ['str', 'end', 'agi'].reduce((sum, key) => sum + resident.stats[key] + gain(resident, outfit, key), 0);
@@ -163,7 +164,7 @@ function shelterEquipmentContext(view) {
   const model = shelterEquipmentModel(view);
   return JSON.stringify({
     residents: [...model.residents.values()].sort((left, right) => left.id - right.id).map(resident => [resident.id,
-      resident.roomId, resident.adultAt <= view.serverTime, resident.away, resident.deadAt, model.keys.map(key => resident.stats[key])]),
+      resident.roomId, resident.adultAt <= view.serverTime, resident.away, resident.deadAt, Boolean(resident.locked), Boolean(resident.giftOffer), model.keys.map(key => resident.stats[key])]),
     rooms: [...model.rooms.values()].sort((left, right) => left.id - right.id).map(room => [room.id, room.type, shelterEquipmentIncidentBlocks(room, view.serverTime)]),
     items: [...model.items.values()].sort((left, right) => left.id - right.id).map(item => [item.id, item.slot,
       item.slot === 'weapon' ? item.damage : model.keys.map(key => item.bonus[key] ?? 0)])

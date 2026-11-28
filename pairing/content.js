@@ -29,6 +29,9 @@
         throw new Error(`居民「${resident.name ?? resident.id}」的数据不完整，无法计算`);
       }
       const reasons = [];
+      if (resident.locked) reasons.push('居民已锁定');
+      if (resident.giftOffer) reasons.push('居民正在赠送');
+      if (resident.awaitingAssignment) reasons.push('等待首次安排');
       if ([...(globalThis.__fengbaoShelterAuto?.parentReturns ?? []), ...(globalThis.__fengbaoShelterAuto?.incidentSnapshot ?? [])]
         .some(entry => entry.residentId === resident.id && entry.status === 'waiting')) reasons.push('托管配对或救援待归岗');
       if ((view.state.quests ?? []).some(run => run.team?.includes(resident.id))) reasons.push('本周任务小队');

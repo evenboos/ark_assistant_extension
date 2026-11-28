@@ -2,7 +2,7 @@
 // 只把时段化结果放进核验快照，避免同一时段内服务器时间变化导致任务误停。
 function workforceDoorGuardRequired(view) {
   const date = new Date(view?.serverTime);
-  return !Number.isFinite(date.getTime()) || date.getHours() >= 8;
+  return !Number.isFinite(date.getTime()) || new Date(date.getTime() + 8 * 3600000).getUTCHours() >= 8;
 }
 // 夜间大门掠夺者进度冻结。该事件保留在房间数据中，但不阻止生产与居民自动化。
 function workforceIncidentBlocksAutomation(room, view) {
@@ -51,7 +51,19 @@ function shelterCoordination(view) {
     ...(Array.isArray(auto?.incidentSnapshot) ? auto.incidentSnapshot : [])
   ].filter(entry => entry.status === 'waiting');
   const quests = new Set((view.state.quests ?? []).flatMap(run => Array.isArray(run.team) ? run.team : []));
-  return { entries, protectedIds: new Set([...quests, ...entries.map(entry => entry.residentId)]), quests };
+  const held = view.state.residents.filter(resident => resident.locked || resident.giftOffer).map(resident => resident.id);
+  return { entries, protectedIds: new Set([...quests, ...held, ...entries.map(entry => entry.residentId)]), quests };
+}
+
+// 预约装备仍在仓库中，外出者归队时由游戏原生穿戴，自动化不可提前取走。
+function shelterReservedEquipment(view) {
+  return new Set(view.state.residents.flatMap(resident => Object.values(resident.away?.reservedEquipment ?? {}))
+    .filter(Number.isInteger));
+}
+
+function shelterTrainingProgress(resident, stat) {
+  return resident.trainingStat && resident.trainingStat !== stat
+    ? resident.trainingByStat?.[stat] ?? 0 : resident.training ?? 0;
 }
 
 function shelterRoomOccupancy(view, roomId, assignments = [], exceptId = null) {
@@ -76,6 +88,7 @@ function workforceModel(view, options = {}) {
     scrap: { name: '废料回收站', stat: 'end', resource: 'scrap', base: 8 },
     medbay: { name: '医务室', stat: 'int', resource: 'stimpak', base: 0.5 },
     workshop: { name: '零件工坊', stat: 'int', resource: 'parts', base: 0.6 },
+    sorter: { name: '垃圾分拣站', stat: 'lck', base: 8 },
     radio: { name: '电台', stat: 'cha' },
     training: { name: '训练室' }
   };
@@ -89,7 +102,7 @@ function workforceModel(view, options = {}) {
   for (const room of state.rooms) {
     if (!['id', 'level', 'width', 'floor', 'col', 'builtAt'].every(key => Number.isFinite(room[key])) ||
         !Number.isInteger(room.id) || roomIds.has(room.id) || ![1, 2, 3, 4, 5, 6].includes(room.width) ||
-        !['door', 'elevator', 'power', 'diner', 'water', 'scrap', 'quarters', 'storage', 'medbay', 'training', 'workshop', 'armory', 'tailor', 'radio'].includes(room.type) ||
+        !['door', 'elevator', 'power', 'diner', 'water', 'scrap', 'sorter', 'quarters', 'storage', 'medbay', 'training', 'workshop', 'armory', 'tailor', 'radio'].includes(room.type) ||
         ![1, 2, 3].includes(room.level) || (room.type === 'training' && !keys.includes(room.trainStat))) throw new Error('房间数据已变化，无法计算产出');
     roomIds.add(room.id);
   }
@@ -124,6 +137,7 @@ function workforceModel(view, options = {}) {
     const room = roomById.get(resident.roomId);
     // 外出成人仍占原岗位名额；事件、大门防守和正在制作的工坊也保留人手。
     const reason = resident.adultAt > now ? '儿童' : !atHome(resident) ? '外出或已倒下' :
+      resident.locked ? '居民已锁定' : resident.giftOffer ? '居民正在赠送' :
       borrowedIds.has(resident.id) ? coordination.quests.has(resident.id) ? '本周任务小队' : '临时配对或救援，保留归岗记录' :
       workforceIncidentBlocksAutomation(room, view) ? '所在房间正在处理事件' : room?.type === 'door' && guardRequired ? '大门守卫' :
       ['armory', 'tailor'].includes(room?.type) && room.craft ? '正在制作装备的工坊居民' :
@@ -146,8 +160,8 @@ function workforceModel(view, options = {}) {
   };
   const rooms = state.rooms.filter(room => types[room.type] && operating(room)).sort(roomOrder);
   const radioRoom = rooms.find(room => room.type === 'radio') ?? null;
-  const radioUsable = Boolean(radioRoom && radioRoom.builtAt <= now && !radioRoom.unpowered &&
-    !workforceIncidentBlocksAutomation(radioRoom, view));
+  const radioRoomIds = new Set(rooms.filter(room => room.type === 'radio').map(room => room.id));
+  const radioUsable = radioRoomIds.size > 0;
   // 产出按房间分组一次，net 与增量评价都直接复用，不再为每个房间反复过滤全部居民。
   const atHomeResidents = state.residents.filter(atHome);
   const atHomeAdults = atHomeResidents.filter(resident => resident.adultAt <= now);
@@ -163,7 +177,7 @@ function workforceModel(view, options = {}) {
   const demand = {
     power: state.rooms.filter(room => room.builtAt <= now).reduce((sum, room) => sum +
       (['door', 'elevator', 'power'].includes(room.type) ? 0 :
-        (types[room.type]?.resource ? 1 : 0.5) * room.width * room.level), 0),
+        (types[room.type]?.base ? 1 : 0.5) * room.width * room.level), 0),
     food: population, water: population, scrap: 0, parts: 0, stimpak: 0
   };
   const events = view.env?.events ?? [];
@@ -219,7 +233,7 @@ function workforceModel(view, options = {}) {
     return (0.5 + stat(resident, type) / 10) * moodFactor(happiness) * levelBonus(resident);
   }
   function rate(resident, room, happiness = resident?.happiness) {
-    return resident && room && types[room.type]?.resource ? types[room.type].base * [0, 1, 1.5, 2.1][room.level] *
+    return resident && room && types[room.type]?.base ? types[room.type].base * [0, 1, 1.5, 2.1][room.level] *
       factor(resident, room.type, happiness) * bonus : 0;
   }
   // 心情目标只取决于居民自身和目标房间，单独缓存供心情预测与增量评价复用。
@@ -249,7 +263,7 @@ function workforceModel(view, options = {}) {
     const destinations = assignments && new Map(assignments.map(item => [item.residentId, item.roomId]));
     const position = resident => destinations?.has(resident.id) ? destinations.get(resident.id) : resident.roomId;
     const radioActive = radioUsable && state.residents.some(resident => resident.away === null &&
-      resident.deadAt === null && resident.adultAt <= now && position(resident) === radioRoom.id);
+      resident.deadAt === null && resident.adultAt <= now && radioRoomIds.has(position(resident)));
     const projected = atHomeResidents.map(resident => {
       const profile = moodProfile(resident, position(resident));
       const target = Math.max(5, Math.min(100, profile.base + (radioActive ? 10 : 0)));
@@ -301,7 +315,7 @@ function workforceModel(view, options = {}) {
   function net(assignments) { return netAt(assignments, 'current'); }
   function longTermNet(assignments) { return netAt(assignments, 'target'); }
   return { types, workers, excluded, rooms, unavailableRooms, demand, stat, factor, rate, happiness, net, longTermNet, reserved, options,
-    doorGuardRequired: guardRequired, happinessPerk, moodProfile, moodFactor, radioRoom, radioUsable, atHomeResidents, roomById, now };
+    doorGuardRequired: guardRequired, happinessPerk, moodProfile, moodFactor, radioRoom, radioRoomIds, radioUsable, atHomeResidents, roomById, now };
 }
 
 function workforceTrainingAllowed(resident, room, options) {
@@ -313,8 +327,8 @@ function workforceTrainingAllowed(resident, room, options) {
 
 function planWorkforceHighest(view, options = {}, model = workforceModel(view, options)) {
   const { types, workers, rooms } = model;
-  // 岗位按六项基础属性选择，幸运和服装不参与最高属性比较。
-  const keys = ['str', 'per', 'end', 'cha', 'int', 'agi'];
+  // 有分拣站时幸运也有生产岗位；服装不参与此兼容策略的最高属性比较。
+  const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', ...(rooms.some(room => room.type === 'sorter') ? ['lck'] : [])];
   const candidates = workers.map(worker => {
     const highest = Math.max(...keys.map(key => worker.stats[key]));
     return { worker, highest, stats: keys.filter(key => worker.stats[key] === highest) };
@@ -440,9 +454,15 @@ function* planWorkforceProductionSteps(view, model) {
     workers.some(resident => workforceTrainingAllowed(resident, room, options)));
   const capacities = targets.map(room => Math.max(0, room.width * 2 - model.reserved(room)));
   const empty = targets.length;
-  const resources = ['power', 'food', 'water', 'scrap', 'parts', 'stimpak'];
-  const demandOf = resources.map(resource => model.demand[resource]);
+  // sorting 仅代表待分拣物，不映射成废料、水电粮等确定奖励。
+  const resources = ['power', 'food', 'water', 'scrap', 'parts', 'stimpak', 'sorting'];
+  const resourceCount = resources.length;
+  const demandOf = resources.map(resource => model.demand[resource] ?? 0);
   const base = model.net(workers.map(worker => ({ residentId: worker.id, roomId: null })));
+  const movableIds = new Set(workers.map(worker => worker.id));
+  base.sorting = rooms.filter(room => room.type === 'sorter').reduce((sum, room) => sum +
+    model.atHomeResidents.filter(resident => resident.adultAt <= model.now && !movableIds.has(resident.id) && resident.roomId === room.id)
+      .slice(0, room.width * 2).reduce((amount, resident) => amount + model.rate(resident, room), 0), 0);
   const trainingPerk = view.state.legacy.perks.training ?? 0;
   if (!Number.isFinite(trainingPerk) || trainingPerk < 0) throw new Error('训练加成数据不完整');
   // 不同产物按各自基础产量折算，避免把 1 废料直接当作 1 治疗针比较。
@@ -461,6 +481,10 @@ function* planWorkforceProductionSteps(view, model) {
         vector[resources.indexOf(definition.resource)] = rate;
         if (room.type === 'workshop') vector[3] = -6 * rate;
         efficiency = rate / definition.base;
+      } else if (room.type === 'sorter') {
+        // 只按待分拣物的产速比较，随机出货不作为可保障的资源收入。
+        vector[6] = model.rate(worker, room);
+        efficiency = vector[6] / definition.base;
       } else {
         // 电台招募只用基础魅力，服装、等级和心情不计入。
         efficiency = worker.stats.cha / 10;
@@ -503,7 +527,7 @@ function* planWorkforceProductionSteps(view, model) {
     const power = net[0] + demandOf[0], food = net[1] + demandOf[1], water = net[2] + demandOf[2];
     const scrap = net[3] + demandOf[3], parts = net[4] + demandOf[4], stimpak = net[5] + demandOf[5];
     return Math.max(0, power) / 12 + Math.max(0, food) / 8 + Math.max(0, water) / 8 +
-      Math.max(0, scrap + 6 * parts) / 8 + Math.max(0, parts) / 0.6 + Math.max(0, stimpak) / 0.5;
+      Math.max(0, scrap + 6 * parts) / 8 + Math.max(0, parts) / 0.6 + Math.max(0, stimpak) / 0.5 + Math.max(0, net[6]) / 8;
   }
   // 排序目标就是“产出”：先填满生产岗位，再比总产出与有效属性，产出相同时才看电粮水平衡。
   function rank(summary) {
@@ -626,7 +650,7 @@ function* planWorkforceProductionSteps(view, model) {
   const destinationResource = new Int8Array(slots).fill(-1);
   const destinationScrap = new Float64Array(slots);
   targets.forEach((room, index) => {
-    const resource = types[room.type].resource;
+    const resource = room.type === 'sorter' ? 'sorting' : types[room.type].resource;
     destinationResource[index] = resource ? resources.indexOf(resource) : -1;
     destinationScrap[index] = room.type === 'workshop' ? -6 : 0;
   });
@@ -650,18 +674,19 @@ function* planWorkforceProductionSteps(view, model) {
       slotCur[offset] = value && destinationResource[destination] >= 0 ? value.vector[destinationResource[destination]] : 0;
     }
   }
-  // [0..5] 当前心情总产出，[6..11] 无电台长期总产出，[12..17] 有电台长期总产出；净产出再减 demand。
-  const totals = new Float64Array(18);
+  // 三段累加量分别表示当前、无电台长期、有电台长期产出；最后一项为待分拣物。
+  const totals = new Float64Array(resourceCount * 3);
   const metricTotals = new Float64Array(5);
-  const delta = new Float64Array(18);
+  const delta = new Float64Array(resourceCount * 3);
   const metricDelta = new Float64Array(5);
   const candidateMetrics = new Float64Array(9);
-  const netLong = new Float64Array(6);
+  const netLong = new Float64Array(resourceCount);
   const occupied = new Array(targets.length).fill(0);
-  const radioIndex = model.radioRoom ? targets.findIndex(room => room.id === model.radioRoom.id) : -1;
+  const radioIndices = new Set(targets.flatMap((room, index) => room.type === 'radio' ? [index] : []));
   const workerIdSet = new Set(workers.map(worker => worker.id));
   const fixedResidents = model.atHomeResidents.filter(resident => !workerIdSet.has(resident.id));
-  const radioFixed = radioIndex >= 0 && fixedResidents.some(resident => resident.adultAt <= model.now && resident.roomId === model.radioRoom.id);
+  const radioFixed = fixedResidents.some(resident => resident.adultAt <= model.now && model.radioRoomIds.has(resident.roomId));
+  const radioWorkersNow = () => [...radioIndices].reduce((sum, index) => sum + occupied[index], 0);
   let currentMoodSum = 0;
   const moodSum = [0, 0];
   function accumulate(target, metricTarget, index, destination, sign) {
@@ -671,22 +696,21 @@ function* planWorkforceProductionSteps(view, model) {
     const cur = slotCur[offset], longNo = slotLong[0][offset], longRadio = slotLong[1][offset];
     if (resource >= 0) {
       target[resource] += sign * cur;
-      target[6 + resource] += sign * longNo;
-      target[12 + resource] += sign * longRadio;
+      target[resourceCount + resource] += sign * longNo;
+      target[resourceCount * 2 + resource] += sign * longRadio;
     }
     if (scrap) {
       target[3] += sign * scrap * cur;
-      target[9] += sign * scrap * longNo;
-      target[15] += sign * scrap * longRadio;
+      target[resourceCount + 3] += sign * scrap * longNo;
+      target[resourceCount * 2 + 3] += sign * scrap * longRadio;
     }
     const value = values[index][destination];
     for (let metric = 0; metric < 5; metric++) metricTarget[metric] += sign * value[metricsKeys[metric]];
   }
-  // 把累加量折算成比较向量：岗位数 → 当前/长期电粮水缺口 → 长期产出 → 有效属性 → 其余。
   // 把累加量折算成比较向量：岗位数 → 长期产出 → 电粮水平衡 → 有效属性 → 训练/速度 → 心情 → 原岗保持。
   function computeMetrics(series, moodChange) {
-    const offset = 6 + series * 6;
-    for (let resource = 0; resource < 6; resource++) {
+    const offset = resourceCount * (1 + series);
+    for (let resource = 0; resource < resourceCount; resource++) {
       netLong[resource] = totals[offset + resource] + delta[offset + resource] - demandOf[resource];
     }
     const targetSum = moodSum[series] + moodChange;
@@ -713,7 +737,7 @@ function* planWorkforceProductionSteps(view, model) {
     moodSum[0] = 0;
     moodSum[1] = 0;
     currentMoodSum = 0;
-    for (let resource = 0; resource < 6; resource++) totals[resource] = base[resources[resource]] + demandOf[resource];
+    for (let resource = 0; resource < resourceCount; resource++) totals[resource] = base[resources[resource]] + demandOf[resource];
     // 不受一键安排影响的居民（儿童以外的保留者）固定在自己房间，贡献先算进累加量。
     for (const resident of fixedResidents) {
       const profile = model.moodProfile(resident, resident.roomId);
@@ -722,14 +746,15 @@ function* planWorkforceProductionSteps(view, model) {
       moodSum[1] += moods[1];
       currentMoodSum += Math.max(0, Math.min(100, resident.happiness));
       const room = resident.roomId === null ? null : model.roomById.get(resident.roomId);
-      const resource = room && rooms.includes(room) ? types[room.type].resource : null;
+      const resource = resident.adultAt <= model.now && room && rooms.includes(room)
+        ? room.type === 'sorter' ? 'sorting' : types[room.type].resource : null;
       if (!resource) continue;
       const destinationResourceIndex = resources.indexOf(resource);
       const unit = model.rate(resident, room, 100);
       const scrap = room.type === 'workshop' ? -6 : 0;
       const rates = [unit * model.moodFactor(moods[0]), unit * model.moodFactor(moods[1])];
       for (const series of [0, 1]) {
-        const offset = 6 + series * 6;
+        const offset = resourceCount * (1 + series);
         totals[offset + destinationResourceIndex] += rates[series];
         totals[offset + 3] += scrap * rates[series];
       }
@@ -749,7 +774,7 @@ function* planWorkforceProductionSteps(view, model) {
   function stateMetrics() {
     delta.fill(0);
     metricDelta.fill(0);
-    const series = seriesNow(radioIndex >= 0 ? occupied[radioIndex] : 0);
+    const series = seriesNow(radioWorkersNow());
     computeMetrics(series, 0);
     return Float64Array.from(candidateMetrics);
   }
@@ -762,17 +787,17 @@ function* planWorkforceProductionSteps(view, model) {
     const fromOffset = index * slots + from, toOffset = index * slots + destination;
     let moodChangeNo = slotMood[0][toOffset] - slotMood[0][fromOffset];
     let moodChangeRadio = slotMood[1][toOffset] - slotMood[1][fromOffset];
-    let radioWorkers = radioIndex >= 0 ? occupied[radioIndex] : 0;
-    if (destination === radioIndex) radioWorkers++;
-    if (from === radioIndex) radioWorkers--;
+    let radioWorkers = radioWorkersNow();
+    if (radioIndices.has(destination)) radioWorkers++;
+    if (radioIndices.has(from)) radioWorkers--;
     if (other >= 0) {
       const otherFrom = positions[other];
       accumulate(delta, metricDelta, other, otherFrom, -1);
       accumulate(delta, metricDelta, other, from, 1);
       moodChangeNo += slotMood[0][other * slots + from] - slotMood[0][other * slots + otherFrom];
       moodChangeRadio += slotMood[1][other * slots + from] - slotMood[1][other * slots + otherFrom];
-      if (otherFrom === radioIndex) radioWorkers--;
-      if (from === radioIndex) radioWorkers++;
+      if (radioIndices.has(otherFrom)) radioWorkers--;
+      if (radioIndices.has(from)) radioWorkers++;
     }
     const series = seriesNow(radioWorkers);
     computeMetrics(series, series === 1 ? moodChangeRadio : moodChangeNo);
@@ -907,7 +932,7 @@ function workforceContext(view, options) {
   return JSON.stringify({
     residents: [...view.state.residents].sort((a, b) => a.id - b.id).map(resident => [resident.id,
       resident.adultAt <= view.serverTime, Boolean(resident.away), resident.deadAt, resident.familyCooldownUntil > view.serverTime,
-      resident.outfitId, resident.happiness, keys.map(key => resident.stats[key])]),
+      resident.outfitId, resident.happiness, Boolean(resident.locked), Boolean(resident.giftOffer), keys.map(key => resident.stats[key])]),
     rooms: [...view.state.rooms].sort((a, b) => a.id - b.id).map(room => [room.id, room.type, room.width, room.level, room.floor, room.col,
       room.builtAt <= view.serverTime, room.upgradeAt, workforceIncidentBlocksAutomation(room, view), Boolean(room.unpowered), room.trainStat, Boolean(room.craft)]),
     outfits: view.state.items.filter(item => item.slot === 'outfit').sort((a, b) => a.id - b.id)
@@ -925,7 +950,7 @@ function workforceContext(view, options) {
 function planRoomUpgrade(view, excludedIds = new Set()) {
   const model = workforceModel(view);
   const now = view.serverTime;
-  const resourceOf = room => model.types[room.type]?.resource ?? null;
+  const resourceOf = room => model.types[room.type]?.resource ?? (room.type === 'sorter' ? 'sorter' : null);
   const questTeams = new Set((Array.isArray(view.state.quests) ? view.state.quests : [])
     .flatMap(run => Array.isArray(run.team) ? run.team : []));
   const positions = new Map(view.state.residents.map(resident => [resident.id, resident.roomId]));

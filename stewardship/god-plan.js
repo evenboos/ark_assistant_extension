@@ -4,8 +4,8 @@ function planShelterGod(view, excludedIds = new Set(), onlyFinishedTraining = fa
   const now = view.serverTime;
   const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'];
   const labels = { str: '力量', per: '感知', end: '耐力', cha: '魅力', int: '智力', agi: '敏捷', lck: '幸运' };
-  const production = { str: ['power'], per: ['water'], agi: ['diner'], int: ['workshop', 'medbay'], end: ['scrap'], cha: ['radio'], lck: [] };
-  const names = { power: '发电站', water: '净水站', diner: '餐厅', workshop: '零件工坊', medbay: '医务室', scrap: '废料回收站', radio: '电台' };
+  const production = { str: ['power'], per: ['water'], agi: ['diner'], int: ['workshop', 'medbay'], end: ['scrap'], cha: ['radio'], lck: ['sorter'] };
+  const names = { power: '发电站', water: '净水站', diner: '餐厅', workshop: '零件工坊', medbay: '医务室', scrap: '废料回收站', radio: '电台', sorter: '垃圾分拣站' };
   const total = resident => keys.reduce((sum, key) => sum + resident.stats[key], 0);
   options = workforceOptions(options);
   const trainingKeys = keys.filter(key => key !== 'cha' || options.trainCharisma).filter(key => key !== 'lck' || options.trainLuck);
@@ -106,7 +106,7 @@ function planShelterGod(view, excludedIds = new Set(), onlyFinishedTraining = fa
       const next = nextTraining(resident, room);
       parents.push({
         id: resident.id, name: resident.name, stat: labels[room.trainStat], current,
-        progress: current >= 10 ? 1 : Math.max(0, Math.min(1, resident.training)),
+        progress: current >= 10 ? 1 : Math.max(0, Math.min(1, shelterTrainingProgress(resident, room.trainStat))),
         room: roomName(room), nextRoom: next ? roomName(next) : '去休息'
       });
       if (current >= 10 && !excludedIds.has(resident.id)) move(resident, next);

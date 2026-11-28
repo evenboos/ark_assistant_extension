@@ -4,18 +4,22 @@
 var shelterUpgradeGroups = [
   'power', 'scrap', 'workshop', 'diner', 'water',
   'quarters', 'storage', 'training', 'armory', 'tailor', 'door',
-  'medbay', 'radio'
+  'medbay', 'radio', 'sorter'
 ];
 var shelterUpgradeLabels = {
   power: '发电站', scrap: '废料回收站', workshop: '零件工坊', diner: '餐厅', water: '净水站',
   quarters: '宿舍', storage: '仓库', training: '训练室', armory: '武器工坊', tailor: '服装工坊', door: '大门',
-  medbay: '医务室', radio: '电台'
+  medbay: '医务室', radio: '电台', sorter: '垃圾分拣站'
 };
 // 游戏房间的基础造价；大门升级固定按 400 计算，电梯不能升级。
 var shelterUpgradeBaseCost = {
   door: 400, power: 100, diner: 100, water: 100, scrap: 80, quarters: 120,
-  storage: 80, medbay: 300, training: 400, workshop: 500, armory: 600, tailor: 600, radio: 800
+  storage: 80, medbay: 300, training: 400, workshop: 500, armory: 600, tailor: 600, radio: 800, sorter: 450
 };
+
+function shelterConstructionLimit(view) {
+  return Number(view?.state?.depth) >= 10 ? 3 : 2;
+}
 
 function normalizeShelterUpgradeOrder(order) {
   const result = [];

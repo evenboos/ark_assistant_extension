@@ -82,7 +82,7 @@ function startDormAssignment(pairs, options = {}) {
       if (!member || typeof member.name !== 'string' || !Number.isFinite(member.adultAt) ||
           !Array.isArray(member.parents) || !keys.every(key => Number.isFinite(member.stats?.[key])) ||
           (member.familyCooldownUntil != null && !Number.isFinite(member.familyCooldownUntil))) throw new Error('配对居民数据不完整，请重新计算');
-      if (member.adultAt > view.serverTime || member.away !== null || member.deadAt !== null || source?.incident ||
+      if (member.locked || member.giftOffer || member.awaitingAssignment || member.adultAt > view.serverTime || member.away !== null || member.deadAt !== null || source?.incident ||
           (['armory', 'tailor'].includes(source?.type) && source.craft) ||
           pendingParent(member.id) || questIds().has(member.id) || autoProtected(member.id) ||
           (member.romance && source?.type === 'quarters') || member.familyCooldownUntil > view.serverTime) {
@@ -107,7 +107,7 @@ function startDormAssignment(pairs, options = {}) {
     return entry;
   }
   function mobile(member) {
-    return member && member.away === null && member.deadAt === null && member.adultAt <= view.serverTime;
+    return member && !member.locked && !member.giftOffer && member.away === null && member.deadAt === null && member.adultAt <= view.serverTime;
   }
   async function move(entry, destination, returning = false, staging = false) {
     await request();

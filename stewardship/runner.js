@@ -24,7 +24,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       !Number.isInteger(targetCount) || targetCount < 1)) throw new Error('请选择目标建筑并填写正整数格数');
   if (targetEnabled && targetRoom === 'training' && !['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'].includes(targetStat)) throw new Error('请选择目标训练属性');
   const statLabels = { str: '力量', per: '感知', end: '耐力', cha: '魅力', int: '智力', agi: '敏捷', lck: '幸运' };
-  const roomLabels = { power: '发电站', diner: '餐厅', water: '净水站', scrap: '废料回收站', workshop: '零件工坊', medbay: '医务室', radio: '电台', training: '训练室' };
+  const roomLabels = { power: '发电站', diner: '餐厅', water: '净水站', scrap: '废料回收站', workshop: '零件工坊', medbay: '医务室', radio: '电台', training: '训练室', sorter: '垃圾分拣站' };
   const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'];
   // 游戏服装图鉴按“前缀 + 款式/档位”记录；同一档 6 种全亮才算集齐，武器不参与自动造服装。
   const outfitTierPrefixes = ['破旧', '普通', '结实', '精良', '改装', '传奇', '星核'];
@@ -242,7 +242,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
   async function act(action, mode = '') {
     if (action.type === 'rush') throw new Error('已禁用星核汽水加速');
     if (stopped()) return false;
-    if (['assign', 'equip', 'rename_resident', 'dismiss', 'quest_start', 'rescue_incident'].includes(action.type)) {
+    if (['assign', 'equip', 'rename_resident', 'dismiss', 'explore_start', 'quest_start', 'rescue_incident'].includes(action.type)) {
       const expectedIncident = incidentKey(view.state.rooms.find(room => room.id === action.roomId));
       const expected = view.state.residents.find(item => item.id === action.residentId);
       const expectedRoom = expected?.roomId;
@@ -267,6 +267,9 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       if (mode === 'rescue' || action.type === 'rescue_incident') {
         const target = view.state.rooms.find(room => room.id === action.roomId);
         if (!blockingIncident(target) || incidentKey(target) !== expectedIncident) return false;
+        // 原生一键救援由服务端选人；有手动保护对象时改用可逐人复核的救援。
+        if (action.type === 'rescue_incident' && view.state.residents.some(item =>
+          (item.locked || item.giftOffer) && item.away === null && item.deadAt === null)) return false;
       }
       if (mode === 'pair' && action.type === 'assign') {
         const entry = task.parentReturns.find(item => item.residentId === action.residentId && item.status === 'waiting');
@@ -292,7 +295,8 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
           !source.incident && view.state.rooms.find(room => room.id === action.roomId)?.type === 'tailor';
         const sourceBlocked = Boolean((source?.craft && !craftShuttle) ||
           source?.incident && !(mode === 'return' && frozenDoorRaiders(source)));
-        const reason = resident.deadAt !== null || resident.away !== null || resident.adultAt > view.serverTime ? '居民当前无法调动' :
+        const reason = resident.locked ? '居民已锁定' : resident.giftOffer ? '居民正在赠送' :
+          resident.deadAt !== null || resident.away !== null || resident.adultAt > view.serverTime ? '居民当前无法调动' :
           coordination.quests.has(resident.id) ? '本周任务小队' :
           coordination.protectedIds.has(resident.id) && !record && !restoringIncident && !(mode === 'pair' && task.parentReturns.some(entry => entry.residentId === resident.id && entry.expectedRoomId === resident.roomId)) && !(mode === 'rescue' && task.incidentSnapshot?.some(entry => entry.residentId === resident.id && entry.expectedRoomId === resident.roomId)) ? '有配对或救援归岗记录' :
           sourceBlocked ? '来源房间正在处理事故或制作' :
@@ -327,11 +331,26 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
         })) return false;
       }
       if (action.type === 'equip') {
+        if (shelterReservedEquipment(view).has(action.itemId)) return false;
         const field = action.slot === 'weapon' ? 'weaponId' : 'outfitId';
         const owner = view.state.residents.find(item => item[field] === action.itemId);
         const source = view.state.rooms.find(room => room.id === owner?.roomId);
         if (owner?.id !== itemOwner || owner && (owner.away !== null || owner.deadAt !== null ||
             coordination.protectedIds.has(owner.id) || blockingIncident(source) || source?.craft)) return false;
+      }
+    }
+    if (action.type === 'build' || action.type === 'upgrade') {
+      await read();
+      if (stopped() || activeConstructionCount() >= shelterConstructionLimit(view)) return false;
+      if (action.type === 'build') {
+        if (action.room === 'sorter' && (view.switches?.sorterBuild === false || Number(view.progress?.level) < 5)) return false;
+        if (shelterTargetFloorSpot(view, action.floor, action.room, action.trainStat) !== action.col ||
+            Number(view.state.resources?.scrap) < shelterTargetCost(view, action.room)) return false;
+      } else {
+        const room = view.state.rooms.find(item => item.id === action.roomId);
+        const reservedRooms = new Set(shelterCoordination(view).entries.map(entry => entry.originalRoomId));
+        const candidate = planRoomUpgrades(view, task.upgradeOrder, reservedRooms).find(item => item.room.id === room?.id);
+        if (!candidate || !shelterUpgradeAffordable([candidate], view.state.resources)) return false;
       }
     }
     if (stopped()) return false;
@@ -431,7 +450,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       }
       if (!ready(entry)) continue;
       if (atOriginal) {
-        entry.status = 'returned'; entry.note = '';
+        entry.status = 'returned'; entry.note = ''; entry.expectedRoomId = entry.originalRoomId;
         task.recentMoves[resident.id] = view.serverTime;
         continue;
       }
@@ -612,7 +631,8 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       let rescue = task.incidentRescues[key];
       if (!rescue || rescue.mode !== rescueMode) rescue = task.incidentRescues[key] = { mode: rescueMode, count: 0, complete: false };
       if (rescue.complete) continue;
-      if (rescueMode === 'auto') {
+      const heldResidents = view.state.residents.some(item => (item.locked || item.giftOffer) && item.away === null && item.deadAt === null);
+      if (rescueMode === 'auto' && !heldResidents) {
         while (rescue.count < rescueCount) {
           await read();
           if (stopped()) return;
@@ -646,6 +666,8 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
         if (rescue.count >= rescueCount) rescue.complete = true;
         continue;
       }
+      if (rescueMode === 'auto' && heldResidents) logQuiet('rescue:protected',
+        '事件救援：存在锁定或赠送居民，改用逐人复核的专人救援，保留这些居民的岗位。');
       const useDiner = ['fire', 'leak'].includes(original.incident.kind);
       const firstScrap = view.state.rooms.filter(room => room.type === 'scrap').sort((a, b) => a.floor - b.floor || a.col - b.col || a.id - b.id)[0];
       const sourceTypes = useDiner ? ['diner'] : ['door', 'power', 'armory'];
@@ -713,7 +735,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
   }
   // 用户指定的自动生育门槛：每项基础属性至少 9＋10，不计装备。
   function birthCandidate(resident) {
-    return Boolean(resident) && keys.every(key =>
+    return Boolean(resident) && !resident.awaitingAssignment && !resident.locked && !resident.giftOffer && keys.every(key =>
       Number.isInteger(resident.stats?.[key]) && resident.stats[key] >= 9 && resident.stats[key] <= 10);
   }
   function birthPairAllowed(left, right) {
@@ -953,11 +975,14 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
   }
   function populationCanDismiss() {
     return populationOptions.enabled && !incidentsBlockAutomation() && !stopped() &&
+      populationHasRecruitment() &&
       (task.populationLastDismissAt === null || view.serverTime - task.populationLastDismissAt >= populationWaitMs);
   }
   function populationHasRecruitment() {
-    // 电台必须实际值班且可用；没有补员来源时不能仅凭满人口持续减员。
-    if (view.state.rooms.some(room => room.type === 'radio' && !workforceRoomReasons(room, view.serverTime).length && !room.craft &&
+    // 1/2/3 级电台新人的每项上限为 5/6/7，总分至多 35/42/49。
+    // 达不到用户底线的电台不是有效补员来源，暂停招募也不能触发清理。
+    if (!view.state.radioRecruitmentPaused && view.state.rooms.some(room => room.type === 'radio' &&
+        7 * (room.level + 4) >= populationOptions.total && !workforceRoomReasons(room, view.serverTime).length && !room.craft &&
         view.state.residents.some(resident => resident.roomId === room.id && resident.away === null &&
           resident.deadAt === null && resident.adultAt <= view.serverTime))) return true;
     if (!task.birthEnabled) return false;
@@ -988,6 +1013,8 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
   async function optimizePopulation() {
     if (!populationOptions.enabled || stopped() || incidentsBlockAutomation()) return;
     await read();
+    if (!populationHasRecruitment()) logQuiet('population:no-source',
+      `人口优化：暂无能达到 ${populationOptions.total} 分的补员来源，暂停遣散；电台新人的总属性上限为 35/42/49（1/2/3 级），暂停招募的电台不计入。`, 60 * 60000);
     // 新到电台成人走同一总属性底线；旧的新人遣散配置仍独立生效。
     task.populationPending = task.populationPending.filter(id => {
       const resident = view.state.residents.find(item => item.id === id);
@@ -1492,7 +1519,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
   }
 
   const activeConstructions = () => view.state.rooms.filter(room =>
-    Number(room.upgradeAt) > view.serverTime || Number(room.builtAt) > view.serverTime);
+    room.type !== 'elevator' && (room.upgradeAt != null || Number(room.builtAt) > view.serverTime));
   const activeConstructionCount = () => activeConstructions().length;
   // 把正在施工/升级的房间写进等待日志，避免只看到“施工位已满”却不知道是谁占着。
   const constructionText = () => activeConstructions().map(room => {
@@ -1500,13 +1527,17 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
     return `${room.floor} 层${label}${Number(room.upgradeAt) > view.serverTime ? '升级' : '施工'}`;
   }).join('、');
   // 目标建造：从最早的纯电梯空楼层开始，按格连续建指定房间。
-  // 目标未完成时暂停普通房间升级；已有 2 项施工/升级时只等待空位。
+  // 目标未完成时暂停普通房间升级；施工位满时等待。
   async function autoBuildTarget() {
     if (!task.targetEnabled) return false;
     if (typeof shelterTargetStatus !== 'function') throw new Error('目标建造脚本未加载，请重新打开扩展面板');
     const room = task.targetRoom;
     const count = Math.max(0, Math.floor(Number(task.targetCount) || 0));
     if (!room || count < 1 || !shelterTargetBuildable.includes(room)) return false;
+    if (room === 'sorter' && (view.switches?.sorterBuild === false || Number(view.progress?.level) < 5)) {
+      logQuiet('target:sorter-locked', '目标建造：垃圾分拣站尚未解锁，需要玩法等级 5 且开放建造。', 60 * 60000);
+      return true;
+    }
     const trainStat = room === 'training' ? task.targetStat : null;
     let progress = task.targetProgress;
     if (!progress || progress.room !== room || (progress.trainStat ?? null) !== trainStat ||
@@ -1542,15 +1573,16 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       return true;
     }
     const active = activeConstructionCount();
-    if (active >= 2) {
+    const limit = shelterConstructionLimit(view);
+    if (active >= limit) {
       // 施工位被升级/建造占满时，日志里带出具体占位房间；目标进度也一并显示。
       logQuiet('target:slots',
-        `目标建造：已完成 ${status.cells}/${count} 格，两个施工位都被占用（${constructionText() || '未知'}），等空出一个就继续建造。`,
+        `目标建造：已完成 ${status.cells}/${count} 格，${limit} 个施工位都被占用（${constructionText() || '未知'}），等空出一个就继续建造。`,
         10 * 60000);
       return true;
     }
-    // 按可用施工位一次最多开始两格；每格都按最新状态重新计算位置和造价。
-    for (let slot = active; slot < 2; slot++) {
+    // 深度达到 10 层开放第三个施工位，每次提交前重新核验。
+    for (let slot = active; slot < limit; slot++) {
       if (stopped()) return true;
       status = shelterTargetStatus(view, options);
       if (!status.configured || status.complete) break;
@@ -1692,11 +1724,12 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
         30 * 60000);
       return;
     }
-    // 游戏最多同时 2 间房间施工，挖层不占施工位。空位不足时只等待，
-    // 不能继续逐间尝试，否则每间都会收到“同时最多 2 项施工”并被误封 30 分钟。
+    // 深度不足 10 层有 2 个施工位，达到后有 3 个；挖层不占位。
+    // 空位不足时等待，避免逐间请求失败后把可用房间误封 30 分钟。
     const active = activeConstructionCount();
-    if (active >= 2) {
-      logQuiet('upgrade:slots-full', '自动升级：已有 2 间在施工，等待空位。', 60 * 60000);
+    const limit = shelterConstructionLimit(view);
+    if (active >= limit) {
+      logQuiet('upgrade:slots-full', `自动升级：${limit} 个施工位已满，等待空位。`, 60 * 60000);
       return;
     }
     const blocked = new Set([...Object.keys(task.upgradeBlocked).map(Number),
@@ -2347,7 +2380,8 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       if (item[field] != null) owners.set(item[field], item);
     }
     const idle = new Set(questIdleResidents().map(item => item.id));
-    return (view.state.items ?? []).filter(item => item?.slot === slot && Number.isFinite(item.tier))
+    const reserved = shelterReservedEquipment(view);
+    return (view.state.items ?? []).filter(item => item?.slot === slot && Number.isFinite(item.tier) && !reserved.has(item.id))
       .filter(item => {
         const owner = owners.get(item.id);
         if (!owner) return true;
@@ -2915,6 +2949,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
           for (const [id,{ healed, ...config }] of Object.entries(task.pendingDispatch)) {
             if (stopped()) break;
             const resident = view.state.residents.find(item => item.id === Number(id));
+            if (!resident || resident.locked || resident.giftOffer) { delete task.pendingDispatch[id]; continue; }
             if (resident.away !== null) { log(`废土：${resident.name} 已外出，停止本条重复派出。`); delete task.pendingDispatch[id]; continue; }
             // 按游戏规则计算血量上限，每次归来只用一针，等待再次出发时不重复治疗。
             const level = Math.min(50, 1 + Math.floor(Math.sqrt(Math.max(0, resident.xp) / 3)));

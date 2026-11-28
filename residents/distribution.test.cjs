@@ -24,6 +24,23 @@ const normalized = data => data.state.residents.map(item => ({ ...item, stats: k
   isIdle: item.adultAt <= data.serverTime && item.away === null && item.deadAt === null && item.roomId === null }));
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('训练详情按目标属性读取保存进度，切换训练室后不沿用上一项进度', async () => {
+  for (const trainingStat of ['str', 'per']) {
+    const state = fixture();
+    state.state.legacy = { perks: {} }; state.state.lastSettledAt = now;
+    state.state.rooms[0] = { id: 2, type: 'training', trainStat: 'str', floor: 1, level: 1, width: 6,
+      builtAt: 0, upgradeAt: null, incident: null, unpowered: false };
+    state.state.residents = [resident(1, { roomId: 2, trainingStat, training: 0.2, trainingByStat: { str: 0.8 } })];
+    const result = await vm.runInNewContext(read('content.js'), { AbortSignal,
+      location: { origin: 'https://game.arkengine.me', pathname: '/shelter' },
+      fetch: async () => ({ ok: true, status: 200, json: async () => state })
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.training[0].progress, trainingStat === 'str' ? 0.2 : 0.8);
+    assert.equal(result.training[0].remainingSeconds, trainingStat === 'str' ? 17400 : 4800);
+  }
+});
+
 test('存量分布覆盖存活成人儿童外出，排除倒下未出生；忽略装备并重新计算总和', () => {
   const residents = normalized(fixture()); residents[0].total = 999;
   const original = structuredClone(residents);

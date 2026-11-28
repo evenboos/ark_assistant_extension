@@ -17,7 +17,7 @@
     const { residents, rooms } = view.state;
     const now = view.serverTime;
     const keys = ['str', 'per', 'end', 'cha', 'int', 'agi', 'lck'];
-    const roomNames = { door: '大门', elevator: '电梯', power: '发电站', diner: '餐厅', water: '净水站', scrap: '废料回收站', quarters: '宿舍', storage: '仓库', medbay: '医务室', training: '训练室', workshop: '工坊', armory: '武器工坊', tailor: '服装工坊', radio: '电台' };
+    const roomNames = { door: '大门', elevator: '电梯', power: '发电站', diner: '餐厅', water: '净水站', scrap: '废料回收站', quarters: '宿舍', storage: '仓库', medbay: '医务室', training: '训练室', workshop: '工坊', armory: '武器工坊', tailor: '服装工坊', radio: '电台', sorter: '垃圾分拣站' };
     const statNames = { str: '力量', per: '感知', end: '耐力', cha: '魅力', int: '智力', agi: '敏捷', lck: '幸运' };
     const all = residents.map(resident => {
       if (!Number.isFinite(resident.id) || typeof resident.name !== 'string' ||
@@ -33,6 +33,9 @@
       const stats = keys.map(key => resident.stats[key]);
       const level = Math.min(50, 1 + Math.floor(Math.sqrt(Math.max(0, resident.xp) / 3)));
       const reasons = [];
+      if (resident.locked) reasons.push('居民已锁定');
+      if (resident.giftOffer) reasons.push('居民正在赠送');
+      if (resident.awaitingAssignment) reasons.push('等待首次安排');
       if (resident.adultAt > now) reasons.push('儿童（尚未成年）');
       if (resident.romance) reasons.push('正在培养感情');
       if (resident.familyCooldownUntil > now) reasons.push(`刚组建家庭（剩余 ${Math.ceil((resident.familyCooldownUntil - now) / 60000)} 分钟）`);
@@ -94,7 +97,9 @@
     const training = residents.filter(resident => rooms.some(room => room.id === resident.roomId && room.type === 'training'))
       .map(resident => {
         const room = rooms.find(room => room.id === resident.roomId);
-        if (!keys.includes(room.trainStat) || !Number.isFinite(resident.training)) {
+        const progress = resident.trainingStat && resident.trainingStat !== room.trainStat
+          ? resident.trainingByStat?.[room.trainStat] ?? 0 : resident.training;
+        if (!keys.includes(room.trainStat) || !Number.isFinite(progress)) {
           throw new Error(`居民「${resident.name}」的训练数据不完整`);
         }
         const current = resident.stats[room.trainStat];
@@ -102,16 +107,16 @@
           item.deadAt === null && item.adultAt <= now).slice(0, room.width * 2);
         const paused = resident.away !== null || resident.deadAt !== null ? '居民外出或已倒下' :
           resident.adultAt > now ? '儿童还不能训练' : room.builtAt > now ? '房间还没建好' :
-          room.incident ? '房间正在处理事件' : room.unpowered ? '房间停电' :
+          room.upgradeAt != null ? '房间正在升级' : room.incident ? '房间正在处理事件' : room.unpowered ? '房间停电' :
           !trainees.some(item => item.id === resident.id) ? '不在房间训练名额内' : '';
         // 训练每 10 分钟结算一次，按房间等级、传承和当前基础属性估算下次提升时间。
         const rate = room.level * (1 + (view.state.legacy.perks.training ?? 0) * 0.05) / (current + 1);
-        const ticks = Math.ceil(Math.max(0, 1 - resident.training) * 6 / rate - 1e-9);
+        const ticks = Math.ceil(Math.max(0, 1 - progress) * 6 / rate - 1e-9);
         const remainingSeconds = current >= 10 || paused ? null :
           Math.max(0, Math.ceil((view.state.lastSettledAt + ticks * 600000 - now) / 1000));
         return {
           id: resident.id, name: resident.name, stat: room.trainStat, current,
-          progress: Math.max(0, Math.min(1, resident.training)), maxed: current >= 10, paused,
+          progress: Math.max(0, Math.min(1, progress)), maxed: current >= 10, paused,
           room: all.find(item => item.id === resident.id).room, stats: keys.map(key => resident.stats[key]), remainingSeconds, reasons: []
         };
       }).sort((left, right) => right.progress - left.progress || left.id - right.id);

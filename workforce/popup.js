@@ -13,8 +13,10 @@ const roomOptions = shelterRoomOrder();
 let roomOrder = roomOptions.map(item => item.key);
 try {
   const savedOrder = JSON.parse(localStorage.getItem('shelterRoomOrder') || 'null');
-  if (Array.isArray(savedOrder) && savedOrder.length === roomOrder.length && new Set(savedOrder).size === roomOrder.length &&
-      savedOrder.every(key => roomOrder.includes(key))) roomOrder = savedOrder;
+  if (Array.isArray(savedOrder) && savedOrder.length && new Set(savedOrder).size === savedOrder.length &&
+      savedOrder.every(key => roomOrder.includes(key))) {
+    roomOrder = [...savedOrder, ...roomOrder.filter(key => !savedOrder.includes(key))];
+  }
 } catch { /* 读取失败时使用默认顺序。 */ }
 function renderRoomOrder() {
   orderList.replaceChildren();

@@ -7,6 +7,15 @@ const context = vm.createContext({});
 vm.runInContext(readFileSync(join(__dirname, 'room-planner.js'), 'utf8'), context);
 const room = (id, type, floor, col, extra = {}) => ({ id, type, floor, col, level: 1, width: 1, builtAt: 0, upgradeAt: null, incident: null, craft: null, ...extra });
 const state = () => ({ serverTime: 1000, state: { depth: 2, residents: [], rooms: [room(1, 'elevator', 1, 1), room(2, 'elevator', 2, 1), room(3, 'power', 1, 2), room(4, 'storage', 2, 2)] } });
+
+test('新版六格房间整理后仍合并为六格并识别分拣站', () => {
+  const view = state();
+  view.state.rooms[2].width = 6;
+  view.state.rooms[3].type = 'sorter';
+  const result = context.planShelterRooms(view);
+  assert.ok(result.rooms.some(item => item.type === 'power' && item.width === 6));
+  assert.ok(result.rooms.some(item => item.type === 'sorter'));
+});
 test('自定义排序从上到下生效，原默认规划仍可调用', () => {
   const order = Array.from(context.shelterRoomOrder(), item => item.key);
   const original = context.planShelterRooms(state());
