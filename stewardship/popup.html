@@ -78,7 +78,7 @@
       </section>
     </details>
     <details id="target-section" class="feature">
-      <summary><input id="target-enabled" type="checkbox" aria-label="启用目标建造"><span>目标建造</span><button class="help-button" type="button" aria-label="目标建造说明" title="目标建造默认不勾选，不要求开启自动升级。勾选后选择建筑和格数：从最早只有电梯的空楼层开始连续建造（每层最多 6 格，相邻同类同级自动合并，最宽 3 格，按格数计数，每次检查最多开始两格）；目标完成前暂停普通升级，两个施工位都被占用时等任意一个空出就继续建造，事件处理中也继续建造；进度保存在扩展本地，重新开启会接着建。">?</button></summary>
+      <summary><input id="target-enabled" type="checkbox" aria-label="启用目标建造"><span>目标建造</span><button class="help-button" type="button" aria-label="目标建造说明" title="目标建造默认不勾选，不要求开启自动升级。勾选后选择建筑和格数：从最早只有电梯的空楼层开始连续建造（每层最多 6 格，相邻同类同级自动合并，最宽 6 格，按格数计数，每次检查最多开始两格）；目标完成前暂停普通升级，两个施工位都被占用时等任意一个空出就继续建造，事件处理中也继续建造；进度保存在扩展本地，重新开启会接着建。">?</button></summary>
       <section class="feature-options" aria-label="目标建造设置">
         <div class="option-row">
           <select id="target-room" aria-label="目标建筑" required>
@@ -111,7 +111,7 @@
             <option value="lck">幸运</option>
           </select>
         </div>
-        <p class="note" id="target-note">目标建造从最早只有电梯的空楼层开始，按格连续建到指定数量；每层最多 6 格，相邻同类同级会自动合并（最宽 3 格）。目标完成前暂停房间升级；两个施工位都占用时，等任意一个空出就继续建造；事件处理中也继续建造。目标进度保存在扩展本地，重新开启托管会接着建。</p>
+        <p class="note" id="target-note">目标建造从最早只有电梯的空楼层开始，按格连续建到指定数量；每层最多 6 格，相邻同类同级会自动合并（最宽 6 格）。目标完成前暂停房间升级；两个施工位都占用时，等任意一个空出就继续建造；事件处理中也继续建造。目标进度保存在扩展本地，重新开启托管会接着建。</p>
       </section>
     </details>
     <div class="actions"><button id="toggle" disabled>开启</button></div>

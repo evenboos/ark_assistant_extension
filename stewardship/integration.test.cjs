@@ -1246,3 +1246,12 @@ test('日常服装不给训练和电台专配，也不取儿童装备，优先�
     });
   assert.deepEqual(plain(load().planOutfits(state).changes).map(item => [item.residentId, item.itemId]), [[3, 1]]);
 });
+
+test('六格合并房间不会中断托管或提示房间数据已变化', async () => {
+  const state = view([person(1, { roomId: 1 }), person(2)], [room(1, 'power', { width: 6 })]);
+  const result = await run(state, { god: true });
+  await result.tick(30000);
+  assert.ok(!result.task.logs.some(line => line.includes('房间数据已变化')), result.task.logs.join('\n'));
+  assert.equal(result.task.running, true);
+  await result.stop();
+});

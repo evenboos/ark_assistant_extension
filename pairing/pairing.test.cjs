@@ -414,3 +414,11 @@ test('挂载与托管同时运行时，门外暂移居民不会被当作新人�
   assert.equal(auto.running, false);
   assert.equal(result.server.state.residents[2].roomId, null);
 });
+
+test('六格合并宿舍可以正常接纳配对', async () => {
+  const state = basic();
+  state.state.rooms[2].width = 6;
+  const result = await run(state);
+  assert.equal(result.task.completed.length, 1, result.task.message);
+  assert.deepEqual(result.server.state.residents.map(item => item.roomId), [3, 3]);
+});

@@ -229,7 +229,7 @@ function startDormAssignment(pairs, options = {}) {
       await request();
       const dorms = view.state.rooms.filter(item => item.type === 'quarters');
       if (dorms.some(item => !['id', 'level', 'floor', 'col', 'width', 'builtAt'].every(key => Number.isFinite(item[key])) ||
-          ![1, 2, 3].includes(item.width))) throw new Error('宿舍数据不完整');
+          ![1, 2, 3, 4, 5, 6].includes(item.width))) throw new Error('宿舍数据不完整');
       const available = dorms.filter(item => !dormReasons(item).length)
         .sort((a, b) => b.level - a.level || a.floor - b.floor || a.col - b.col || a.id - b.id);
       if (!available.length) throw new Error('没有可用宿舍，请查看不可用宿舍的状态标签');

@@ -873,7 +873,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
     const list = adultsIn(room.id);
     // 房内还有未配对的成人时不再安排，避免服务端把新居民和房里的人凑成一对。
     if (list.some(resident => !hasPartner(resident, list))) return 0;
-    const freeBeds = Math.min(6, room.width * 2) - occupiedBeds(room.id);
+    const freeBeds = room.width * 2 - occupiedBeds(room.id);
     return Math.max(0, Math.min(pairCapacity(room) - pairsInRoom(room.id), Math.floor(freeBeds / 2)));
   }
   // 服务端偶尔会在两次检查之间把刚安排的两人短暂移出宿舍或换房。只要宿舍里
@@ -2046,7 +2046,7 @@ function startShelterAuto(intervalSeconds, recallEvents, dismissEnabled, dismiss
       const fits = room => {
         const list = adultsIn(room.id);
         const moving = members.filter(member => member.roomId !== room.id).length;
-        if (Math.min(6, room.width * 2) - occupiedBeds(room.id) < moving) return false;
+        if (room.width * 2 - occupiedBeds(room.id) < moving) return false;
         if (pairsInRoom(room.id) >= pairCapacity(room)) return false;
         // 房内不能有其他未配对的成人，避免服务端把新来的人和别人凑成一对。
         return !list.some(item => !members.some(member => member.id === item.id) && !hasPartner(item, list));

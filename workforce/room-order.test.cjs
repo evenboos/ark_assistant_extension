@@ -41,3 +41,13 @@ test('夜间冻结的大门掠夺者不阻塞房间整理，其他事件和白�
   daytime.serverTime = at(8);
   assert.throws(() => context.planShelterRooms(daytime), /正在事件/);
 });
+
+test('六格合并房间可以参与整理，并恢复为六格合并', () => {
+  const view = { serverTime: 1000, state: { depth: 2, residents: [], rooms: [
+    room(1, 'elevator', 1, 1), room(2, 'elevator', 2, 1),
+    room(3, 'power', 1, 2, { width: 6 }), room(4, 'storage', 2, 2)
+  ] } };
+  const plan = context.planShelterRooms(view);
+  assert.ok(plan.rooms.some(item => item.type === 'power' && item.width === 6));
+  assert.ok(plan.steps.length > 0);
+});

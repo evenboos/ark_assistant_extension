@@ -88,7 +88,7 @@ function workforceModel(view, options = {}) {
   const roomIds = new Set(), residentIds = new Set();
   for (const room of state.rooms) {
     if (!['id', 'level', 'width', 'floor', 'col', 'builtAt'].every(key => Number.isFinite(room[key])) ||
-        !Number.isInteger(room.id) || roomIds.has(room.id) || ![1, 2, 3].includes(room.width) ||
+        !Number.isInteger(room.id) || roomIds.has(room.id) || ![1, 2, 3, 4, 5, 6].includes(room.width) ||
         !['door', 'elevator', 'power', 'diner', 'water', 'scrap', 'quarters', 'storage', 'medbay', 'training', 'workshop', 'armory', 'tailor', 'radio'].includes(room.type) ||
         ![1, 2, 3].includes(room.level) || (room.type === 'training' && !keys.includes(room.trainStat))) throw new Error('房间数据已变化，无法计算产出');
     roomIds.add(room.id);

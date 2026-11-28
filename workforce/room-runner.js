@@ -99,7 +99,7 @@
       if (shelterRoomLayout(view.state.rooms) !== plan.finalLayout) throw new Error('最终房间布局与计划不一致');
       const model = shelterRoomModel(view);
       showRooms(model.rooms);
-      task.message = `整理完成：拆分 ${task.split} 次、移动 ${task.moved} 次、恢复自动合并 ${task.merged} 次，房间数 ${initialRooms} → ${view.state.rooms.length}（含大门、电梯）。\n已恢复自动合并；超过 3 格或等级不同的房间保留分开。`;
+      task.message = `整理完成：拆分 ${task.split} 次、移动 ${task.moved} 次、恢复自动合并 ${task.merged} 次，房间数 ${initialRooms} → ${view.state.rooms.length}（含大门、电梯）。\n已恢复自动合并；超过 6 格或等级不同的房间保留分开。`;
     } catch (error) {
       task.message = `整理停止：${error.message}。已完成拆分 ${task.split} 次、移动 ${task.moved} 次、恢复自动合并 ${task.merged} 次，不自动回滚。`;
     } finally {

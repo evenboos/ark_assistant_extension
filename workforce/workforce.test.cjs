@@ -629,3 +629,11 @@ test('计算过程中按下停止会放弃方案，不提交任何调动', async
     budget: 0, defer: () => { stopped = true; return Promise.resolve(); }, stopped: () => stopped
   }), /已按下停止/);
 });
+
+test('六格合并房间可以正常计算产出，超过六格仍拒绝', () => {
+  const state = view([person(1), person(2)], [room(1, 'power', { width: 6 })]);
+  const result = plan(state);
+  assert.equal(result.assignments.length, 2);
+  valid(state, result);
+  assert.throws(() => plan(view([person(1)], [room(1, 'power', { width: 7 })])), /房间数据已变化/);
+});

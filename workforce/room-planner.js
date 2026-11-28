@@ -30,7 +30,7 @@ function shelterRoomModel(view, order = shelterRoomOrder().map(item => item.key)
   }
   const rooms = state.rooms.filter(room => !['door', 'elevator'].includes(room.type));
   for (const room of rooms) {
-    if (!types.includes(room.type) || ![1, 2, 3].includes(room.width) || ![1, 2, 3].includes(room.level) ||
+    if (!types.includes(room.type) || ![1, 2, 3, 4, 5, 6].includes(room.width) || ![1, 2, 3].includes(room.level) ||
         !Number.isInteger(room.id) || !Number.isInteger(room.floor) || !Number.isInteger(room.col) ||
         room.col < 2 || room.floor < 1 || room.floor > state.depth ||
         (room.type === 'training' && !stats.includes(room.trainStat))) throw new Error('房间类型或位置格式已变化，无法规划');
@@ -118,7 +118,7 @@ function planShelterRooms(view, order = shelterRoomOrder().map(item => item.key)
       const room = { ...item, members: [...item.members] };
       const previous = merged.at(-1);
       if (previous && !previous.separate && !room.separate && group(previous) === group(room) &&
-          previous.level === room.level && previous.width + room.width <= 3) {
+          previous.level === room.level && previous.width + room.width <= 6) {
         previous.width += room.width;
         previous.members.push(...room.members);
       } else merged.push(room);
